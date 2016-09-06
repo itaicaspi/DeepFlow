@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Title</title>
+    <title>DeepFlow</title>
     <style>
         html, body, canvas {
             margin: 0;
@@ -10,342 +10,42 @@
             height: 100%;
         }
     </style>
+    <script src="utils.js"></script>
+    <script src="definitions.js"></script>
+    <script src="objects.js"></script>
+    <script src="nn.js"></script>
+    <script src="transforms.js"></script>
+    <script src="shapes.js"></script>
     <script>
 
-        var Camera = function(direction, center) {
-            this.setDirection(direction);
-            this.center = center;
-            this.zoom = 1;
-        };
+        function getBoundingBox(objects) {
 
-        Camera.prototype.setDirection = function(direction) {
-            this.direction = direction;
-            this.direction.normalize();
-        };
-
-        /////////////////////////////////////////
-        //  Color
-
-        var Color = function(r, g, b, a) {
-            this.r = r;
-            this.g = g;
-            this.b = b;
-            this.a = a;
-        };
-
-        Color.prototype.toString = function() {
-            return "rgba(" +
-                    Math.round(this.r) + "," +
-                    Math.round(this.g) + "," +
-                    Math.round(this.b) + "," +
-                    this.a + ")";
-        };
-
-        /////////////////////////////////////////
-        //  Face - a rectangular object face
-
-        var Face = function(p0, p1, p2, p3, normal, color) {
-            this.vertices = [p0, p1, p2, p3];
-            this.normal = normal;
-            this.color = color;
-        };
-
-        Face.prototype.center = function() {
-            var centerX = 0;
-            var centerY = 0;
-            var centerZ = 0;
-            for (var i = 0; i < 4; i++) {
-                centerX += this.vertices[i].x;
-                centerY += this.vertices[i].y;
-                centerZ += this.vertices[i].z;
-            }
-            return new Vertex(centerX/4, centerY/4, centerZ/4);
-        };
-
-        Face.prototype.isBackFace = function(camera) {
-            // Back-face culling
-            return (this.normal.dot(camera.direction) > 0);
-        };
-
-        Face.prototype.pointerInside = function (xm, ym, camera) {
-
-            var p0 = project(this.vertices[0], camera, true);
-            var p1 = project(this.vertices[1], camera, true);
-            var p2 = project(this.vertices[2], camera, true);
-            var p3 = project(this.vertices[3], camera, true);
-
-            // http://2000clicks.com/mathhelp/GeometryPointAndTriangle2.aspx
-            var fAB = function (p1, p2, p3) { return (ym - p1.y) * (p2.x - p1.x) - (xm - p1.x) * (p2.y - p1.y); };
-            var fCA = function (p1, p2, p3) { return (ym - p3.y) * (p1.x - p3.x) - (xm - p3.x) * (p1.y - p3.y); };
-            var fBC = function (p1, p2, p3) { return (ym - p2.y) * (p3.x - p2.x) - (xm - p2.x) * (p3.y - p2.y); };
-
-            if (fAB(p0, p1, p3) * fBC(p0, p1, p3) > 0 && fBC(p0, p1, p3) * fCA(p0, p1, p3) > 0) return true;
-
-            if (fAB(p1, p2, p3) * fBC(p1, p2, p3) > 0 && fBC(p1, p2, p3) * fCA(p1, p2, p3) > 0) return true;
-
-            return false;
-        };
-
-        Face.prototype.shade = function (camera) {
-            // Flat (Lambert) shading
-            var N = project(this.normal, camera, false);
-            var lightSource = new Vertex(3, -20, 0);
-            lightSource.normalize();
-            var light = 180 + N.dot(lightSource) * 76;
-            return new Color(light * this.color.r, light * this.color.g, light * this.color.b, 1);
-        };
-
-        Face.prototype.distanceToCamera = function(camera) {
-            //return this.center().add(camera.center.mul(-1)).norm();
-            return this.center().dot(camera.direction);
-        };
-
-
-        /////////////////////////////////////////
-        //  Vertex - a 3D point in space
-
-        var Vertex = function (x, y, z) {
-            this.x = parseFloat(x);
-            this.y = parseFloat(y);
-            this.z = parseFloat(z);
-        };
-
-        Vertex.prototype.normalize = function() {
-            var vector = new Matrix([[this.x], [this.y], [this.z]]);
-            vector.normalize();
-            this.x = vector.elements[0][0];
-            this.y = vector.elements[1][0];
-            this.z = vector.elements[2][0];
-            return this;
-        };
-
-        Vertex.prototype.norm = function() {
-            return Math.sqrt(Math.pow(this.x,2) + Math.pow(this.y,2) + Math.pow(this.z,2))
-        };
-
-        Vertex.prototype.add = function(v) {
-            return new Vertex(this.x + v.x, this.y + v.y, this.z + v.z);
-        };
-
-        Vertex.prototype.mul = function(s) {
-            return new Vertex(this.x*s, this.y*s, this.z*s);
-        };
-
-        Vertex.prototype.dot = function(v) {
-            return this.x * v.x + this.y * v.y + this.z * v.z;
-        };
-
-        Vertex.prototype.cross = function(v) {
-            return new Vertex(this.y * v.z - v.y * this.z, this.z * v.x - this.x * v.z, this.x * v.y - this.y * v.x);
-        };
-
-        Vertex.prototype.log = function() {
-            console.log(this.x + "," + this.y + "," + this.z);
-        };
-
-        /////////////////////////////////////////
-        // Matrix
-
-        var Matrix = function(elements) {
-            this.rows = elements.length;
-            this.cols = elements[0].length;
-            this.elements = elements;
-        };
-
-        Matrix.prototype.dot = function(matrix) {
-            var result = [];
-            if (this.cols != matrix.rows) throw "Shared side length does not match";
-            for (var i = 0; i < this.rows; i++) {
-                result.push([]);
-                for (var j = 0; j < matrix.cols; j++) {
-                    var val = 0;
-                    for (var k = 0; k < this.cols; k++) {
-                        val += this.elements[i][k] * matrix.elements[k][j];
-                    }
-                    result[i].push(val);
+            var minX = 10000;
+            var maxX = -10000;
+            var minY = 10000;
+            var maxY = -10000;
+            var minZ = 10000;
+            var maxZ = -10000;
+            for (var i = 0; i < objects.length; i++) {
+                var v = objects[i].vertices;
+                for (var j = 0; j < v.length; j++) {
+                    minX = Math.min(minX, v[j].x);
+                    maxX = Math.max(maxX, v[j].x);
+                    minY = Math.min(minY, v[j].y);
+                    maxY = Math.max(maxY, v[j].y);
+                    minZ = Math.min(minZ, v[j].z);
+                    maxZ = Math.max(maxZ, v[j].z);
                 }
             }
-            return new Matrix(result);
-        };
-
-        Matrix.prototype.normalize = function() {
-            var sum = 0;
-            for (var i = 0; i < this.rows; i++) {
-                for (var j = 0; j < this.cols; j++) {
-                    sum += Math.pow(this.elements[i][j],2);
-                }
-            }
-            var normalizer = Math.sqrt(sum);
-            for (var i = 0; i < this.rows; i++) {
-                for (var j = 0; j < this.cols; j++) {
-                    this.elements[i][j] /= normalizer;
-                }
-            }
-            this.normalizer = normalizer;
-        };
-
-        /////////////////////////////////////////
-        //  Box - a 3D rectangular shape
-
-        var Box = function(center, width, height, depth, color) {
-            //            7---------6
-            //          / |        /|
-            //         4---------5  |
-            //         |  |      |  |
-            //         | 3-------|--2    (back)
-            //         |/        | /
-            //         0---------1    (front)
-
-            this.vertices = [
-                new Vertex(center.x - width / 2, center.y - height / 2, center.z - depth / 2),
-                new Vertex(center.x + width / 2, center.y - height / 2, center.z - depth / 2),
-                new Vertex(center.x + width / 2, center.y + height / 2, center.z - depth / 2),
-                new Vertex(center.x - width / 2, center.y + height / 2, center.z - depth / 2),
-                new Vertex(center.x - width / 2, center.y - height / 2, center.z + depth / 2),
-                new Vertex(center.x + width / 2, center.y - height / 2, center.z + depth / 2),
-                new Vertex(center.x + width / 2, center.y + height / 2, center.z + depth / 2),
-                new Vertex(center.x - width / 2, center.y + height / 2, center.z + depth / 2)
-            ];
-
-            this.normals = [
-                new Vertex(0,0,-1),
-                new Vertex(0,-1,0),
-                new Vertex(0,1,0),
-                new Vertex(-1,0,0),
-                new Vertex(1,0,0),
-                new Vertex(0,0,1)
-            ];
-
-            this.faces = [
-                new Face(this.vertices[0], this.vertices[1], this.vertices[2], this.vertices[3], this.normals[0], color), // bottom
-                new Face(this.vertices[0], this.vertices[4], this.vertices[5], this.vertices[1], this.normals[1], color), // front
-                new Face(this.vertices[3], this.vertices[2], this.vertices[6], this.vertices[7], this.normals[2], color), // back
-                new Face(this.vertices[0], this.vertices[3], this.vertices[7], this.vertices[4], this.normals[3], color), // left
-                new Face(this.vertices[1], this.vertices[5], this.vertices[6], this.vertices[2], this.normals[4], color), // right
-                new Face(this.vertices[5], this.vertices[4], this.vertices[7], this.vertices[6], this.normals[5], color)  // top
-            ];
-
-            this.center = center;
-            this.color = color;
-        };
-
-        Box.prototype.pointerInside = function(xm, ym, camera) {
-            for (var i = 0; i < this.faces.length; i++) {
-                if (this.faces[i].pointerInside(xm ,ym, camera)) return true;
-            }
-        };
-/*
-        Box.prototype.center = function () {
-            var avgX = 0;
-            var avgY = 0;
-            var avgZ = 0;
-            for (var i = 0; i < this.vertices.length; i++){
-                avgX += this.vertices[i].x;
-                avgY += this.vertices[i].y;
-                avgZ += this.vertices[i].z;
-            }
-            avgX /= this.vertices.length;
-            avgY /= this.vertices.length;
-            avgZ /= this.vertices.length;
-            return new Vertex(avgX, avgY, avgZ);
-        };
-*/
-        /////////////////////////////////////////
-        //  Cube
-
-        var Cube = function (center, size, color) {
-            return new Box(center, size, size, size, color);
-        };
-
-
-        /////////////////////////////////////////
-        //  Tensor
-
-        var Tensor = function(width, height, depth) {
-            this.width = width;
-            this.height = height;
-            this.depth = depth;
-        };
-
-        Tensor.prototype.toBox = function(center, color) {
-            return new Box(center, this.depth, this.width, this.height, color);
-        };
-
-        ////////////////////////////////////////
-        //  Convolution
-
-        var Convolution = function(numOutput, kernelWidth, kernelHeight, strideX, strideY, padX, padY) {
-
-            this.numOutput = numOutput;
-            this.kernelWidth = kernelWidth;
-            this.kernelHeight = kernelHeight;
-            this.strideX = strideX;
-            this.strideY = strideY;
-            this.padX = padX;
-            this.padY = padY;
-
-        };
-
-        Convolution.prototype.setInput = function(inputTensor) {
-            this.input = inputTensor;
-            var outputWidth = Math.floor((inputTensor.width + 2*this.padX - this.kernelWidth) / this.strideX + 1);
-            var outputHeight = Math.floor((inputTensor.height + 2*this.padY - this.kernelHeight) / this.strideY + 1);
-            this.output = new Tensor(outputWidth, outputHeight, this.numOutput);
-        };
-
-        Convolution.prototype.toBox = function(center, color) {
-            var outputCenter = new Vertex(center.x, center.y, center.z);
-            return this.output.toBox(outputCenter, color);
-        };
-
-        ///////////////////////////////////////
-        // Sequential
-
-        var Sequential = function() {
-            this.layers = [];
-        };
-
-        Sequential.prototype.push = function(layer) {
-            if (this.layers.length == 1) {
-                layer.setInput(this.layers[this.layers.length-1]);
-            } else if (this.layers.length > 1) {
-                layer.setInput(this.layers[this.layers.length-1].output);
-            }
-            this.layers.push(layer);
-        };
-
-        Sequential.prototype.toObjects = function(center, color) {
-            var currentCenter = center;
-            var currentColor = color;
-            var objects = [];
-            for (var i = 0; i < this.layers.length; i++) {
-                currentCenter = currentCenter.add(new Vertex(i > 0 ? this.layers[i].output.depth/2 + 35 : 0, 0, 0));
-                objects.push(this.layers[i].toBox(currentCenter, currentColor));
-                currentColor = nextColor(currentColor);
-                currentCenter = currentCenter.add(new Vertex(i == 0 ? this.layers[i].depth/2 : this.layers[i].output.depth/2, 0, 0));
-            }
-            return objects;
-        };
-
-        // project point on 3d plane
-        function project3D(P, planeN) {
-            var dist = planeN.dot(P);
-            return new Vertex(P.x - dist*planeN.x, P.y - dist*planeN.y, P.z - dist*planeN.z);
+            var width = maxY - minY + 20;
+            var height = maxZ - minZ + 20;
+            var depth = maxX - minX + 20;
+            var center = new Vertex((maxX + minX)/2, (maxY + minY)/2,(maxZ + minZ)/2);
+            return new Box(center, depth, width, height, orange, false, "none", "dashed", "BoundingBox");
         }
 
         function getAxes(camera) {
-            var projectedX = project3D(new Vertex(1, 0, 0), camera.direction);
-            projectedX.normalize();
-            var projectedY = camera.direction.cross(projectedX);
-            return [projectedX, projectedY];
-        }
-
-        // project a vertex onto the XZ manifold
-        function project(P, camera, recenter) {
-            var axes = getAxes(camera);
-            var newP = recenter ? P.add(camera.center) : P;
-            var projection = new Vertex(newP.dot(axes[0]), newP.dot(axes[1]), 0);
-            return recenter ? projection.mul(camera.zoom) : projection;
+            return [camera.perpAxis, camera.direction.cross(camera.perpAxis)];
         }
 
         // get the color shade of a face given a certain light source
@@ -359,67 +59,96 @@
         }
 
 
-        // rotate a point in space around an axis
-        function rotate(M, center, theta, phi) {
-            // Rotation matrix coefficients
-            var ct = Math.cos(theta);
-            var st = Math.sin(theta);
-            var cp = Math.cos(phi);
-            var sp = Math.sin(phi);
-
-            // Rotation
-            var x = M.x - center.x;
-            var y = M.y - center.y;
-            var z = M.z - center.z;
-
-            M.x = ct * x - st * cp * y + st * sp * z + center.x;
-            M.y = st * x + ct * cp * y - ct * sp * z + center.y;
-            M.z = sp * y + cp * z + center.z;
-        }
-
-
-        // rotate an entire object in space
-        function rotateObject(object, theta, phi, center) {
-            for (var i = 0; i < object.vertices.length; i++) {
-                rotate(object.vertices[i], object.center, theta, phi);
-            }
-            for (var i = 0; i < object.normals.length; i++) {
-                rotate(object.normals[i], new Vertex(0,0,0), theta, phi);
-            }
-        }
-
-        function translateAndRescale(M, x, y, z, rescale) {
-            M.x = M.x*rescale+x;
-            M.y = M.y*rescale+y;
-            M.z = M.z*rescale+z;
-        }
-
-        // translate and rescale an entire object in space
-        function translateAndRescaleObject(object, x, y, z, rescale) {
-            for (var i = 0; i < object.vertices.length; i++) {
-                translateAndRescale(object.vertices[i], x, y, z, rescale);
-            }
-            translateAndRescale(object.center, x, y, z, rescale);
-        }
-
-        function render(objects, canvas, ctx, dx, dy, camera) {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
+        function zBuffer(objects, camera, ctx, dx, dy) {
             var allFaces = [];
             for (var i = 0; i < objects.length; i++) {
-                for (var j = 0; j < objects[i].faces.length; j++) {
-                    allFaces.push(objects[i].faces[j]);
+                if (objects[i].type != "Arrow") {
+                    for (var j = 0; j < objects[i].faces.length; j++) {
+                        allFaces.push(objects[i].faces[j]);
+                    }
                 }
             }
 
-            allFaces.sort(function (p0, p1) {
+            allFaces.sort(function (p0, p1) {/*
+                var center0 = p0.center();
+                var center1 = p1.center();
+                var proj0 = project(center0, camera, true);
+                var proj1 = project(center1, camera, true);
+                var dist;
+
+                if (p1.pointerInside(proj0.x, proj0.y,camera)) {
+                    dist = center1.add(center0.mul(-1)).dot(p1.normal)/camera.direction.dot(p1.normal);
+                    console.log(dist);
+                    return dist;
+                } else if (p0.pointerInside(proj1.x, proj1.y,camera)) {
+
+                    dist = center0.add(center1.mul(-1)).dot(p0.normal)/camera.direction.dot(p0.normal);
+                    console.log(dist);
+                    return dist;
+                } else {
+                    //console.log("3");
+                }
+
+
+
+                var on_1 = camera.direction.mul(dist).add(center0);
+                var proj0 = project(center0, camera, true);
+                var proj1 = project(on_1, camera, true);
+*/
+                /*
+                 ctx.beginPath();
+                 ctx.moveTo(proj0.x+dx, proj0.y+dy);
+                 ctx.lineTo(proj1.x+dx, proj1.y+dy);
+                 ctx.stroke();
+                ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+                ctx.fillRect(proj.x+dx, proj.y+dy, 10,10);
+                var vec = proj.add(center1.mul(-1));
+                var dist = vec.dot(p1.normal);
+                var on_1 = center0.add(p1.normal.mul(-dist));
+                proj1 = project(on_1, camera, true);
+                ctx.beginPath();
+                ctx.moveTo(proj.x+dx, proj.y+dy);
+                ctx.lineTo(proj1.x+dx, proj1.y+dy);
+                ctx.stroke();
+                ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+                ctx.fillRect(proj.x+dx, proj.y+dy, 10,10);
+*/
+                //return dist;
                 return p1.distanceToCamera(camera) - p0.distanceToCamera(camera);
             });
+
+            return allFaces;
+        }
+
+        function draw(objects, ctx, dx, dy, camera) {
+            allFaces = zBuffer(objects, camera, ctx, dx, dy);
+/*
+            var buffer = [];
+            for (var i = 0; i < 5; i++) {
+                buffer.push([]);
+                for (var j = 0; j < 5; j++) {
+                    for (var f = 0; f < allFaces.length; f++) {
+                        var face = allFaces[f];
+                        if (!face.pointerInside(j,i,camera)) continue;
+                        var p = project3D(new Vertex(j,i,0), face.normal);
+                        var dist = face.distanceToCamera(camera, p);
+                        if (buffer[i].length <= j) {
+                            buffer[i][j] = [face, dist];
+                        } else {
+                            if (buffer[i][j][1] > dist) {
+                                buffer[i][j] = [face, dist];
+                            }
+                        }
+                    }
+                }
+            }
+*/
 
             // each face
             for (var i = 0; i < allFaces.length; i++) {
                 var face = allFaces[i];
-                if (face.isBackFace(camera)) continue;
+                if (face.fill == "full" && face.isBackFace(camera)) continue;
+                //if (side == "back" && !face.isBackFace(camera)) continue;
 
                 // draw first vertex
                 var P = project(face.vertices[0], camera, true);
@@ -433,12 +162,73 @@
                 }
 
                 ctx.closePath();
-                ctx.lineWidth = 1;
-                ctx.stroke();
-                ctx.fillStyle = face.shade(camera).toString();
-                ctx.fill();
 
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+                ctx.lineWidth = 1;
+                if (face.border == "dashed") {
+                    ctx.setLineDash([5,15]);
+                } else {
+                    ctx.setLineDash([]);
+                }
+                if (face.fill == "full") {
+                    ctx.fillStyle = face.shade(camera).toString();
+                    ctx.fill();
+                }
+                ctx.stroke();
             }
+        }
+
+        function render(objects, canvas, ctx, dx, dy, camera) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            var auxObjects = [getBoundingBox(objects)];
+
+            var allObjects = objects.concat(auxObjects);
+            //draw(auxObjects, canvas, ctx, dx, dy, camera, "BoundingBox", "back");
+            draw(allObjects, ctx, dx, dy, camera);
+            //draw(auxObjects, canvas, ctx, dx, dy, camera, "BoundingBox", "front");
+
+            for (var i = 0; i < objects.length; i++) {
+                if (objects[i].type != "Arrow") continue;
+                ctx.strokeStyle = 'rgba(0, 0, 0, 1)';
+                ctx.fillStyle = 'rgba(0, 0, 0, 1)';
+                ctx.setLineDash([0,0]);
+                ctx.lineWidth = 3;
+
+                // draw line
+                var P = project(objects[i].start, camera, true);
+                ctx.beginPath();
+                ctx.moveTo(P.x + dx, P.y + dy);
+                P = project(objects[i].end, camera, true);
+                ctx.lineTo(P.x + dx, P.y + dy);
+                ctx.closePath();
+                ctx.stroke();
+
+                // draw arrow
+                P = project(objects[i].end, camera, true);
+                ctx.beginPath();
+                ctx.moveTo(P.x + dx, P.y + dy);
+                P = project(objects[i].leftHand, camera, true);
+                ctx.lineTo(P.x + dx, P.y + dy);
+                P = project(objects[i].rightHand, camera, true);
+                ctx.lineTo(P.x + dx, P.y + dy);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+            }
+
+            // print text over objects
+            ctx.textAlign="center";
+            ctx.fillStyle = "rgba(0,0,0,0.7)";
+            ctx.font = "bold " + 14*camera.zoom + "px Arial";
+            for (var i = 0; i < objects.length; i++) {
+                if (objects[i].type != "Box") continue;
+                var top = objects[i].findTopRelativeToCamera(camera);
+                ctx.fillText(objects[i].text,top.x + dx,top.y + dy);
+            }
+
+            // Print legend
+            ctx.textAlign="left";
             ctx.fillStyle = "rgba(0,0,0,1)";
             ctx.font = "bold 16px Arial";
             ctx.fillText("Left mouse click:",50,50);
@@ -453,14 +243,7 @@
 
         }
 
-        var orange = new Color(255/255.0,188/255.0,66/255.0,1);
-        var green = new Color(205/255.0,255/255.0,49/255.0,1);
-        var blue = new Color(113/255.0,190/255.0,255/255.0,1);
-        var red = new Color(255/255.0,112/255.0,151/255.0,1);
-        var purple = new Color(178/255.0,104/255.0,255/255.0,1);
-        var yellow = new Color(232/255.0,229/255.0,23/255.0,1);
-        var cyan = new Color(56/255.0,232/255.0,193/255.0,1);
-        var grey = new Color(102/255.0,105/255.0,104/255.0,1);
+
 
         function nextColor(color) {
             var colors = [orange, green, blue, red, purple, yellow, cyan, grey];
@@ -481,31 +264,31 @@
 
             // Objects style
             var ctx = canvas.getContext('2d');
-            ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
 
             // define the net
             var net = new Sequential();
             net.push(new Tensor(200,200,3));
             net.push(new Convolution(32, 5, 5, 2, 2, 0, 0));
+            net.push(new Arrow());
             net.push(new Convolution(64, 5, 5, 2, 2, 0, 0));
             net.push(new Convolution(128, 5, 5, 2, 2, 0, 0));
+            net.push(new Arrow());
             net.push(new Convolution(128, 5, 5, 1, 1, 0, 0));
+            net.push(new Convolution(256, 5, 5, 1, 1, 0, 0));
 
             var center = new Vertex(0, dy / 2, 0);
-            var objects = net.toObjects(center, orange);
+            var objects = net.toObjects(center, orange, "bottom");
 
-            var camera = new Camera(new Vertex(0, 1, 0), new Vertex(0, 0, 0));
-            var origin = new Vertex(0, 0, 0);
+            var camera = new Camera(new Vertex(0, 1, 0), new Vertex(1, 0, 0), new Vertex(0, 0, 0));
 
-            var degree = Math.PI/360;
-            // First render
-            rotate(camera.direction, new Vertex(0,0,0), 45*degree, -10*degree);
+            var degree = Math.PI/180;
+
+
+            // change perspective
+            camera.rotate(-10*degree, -10*degree, 20*degree);
             var axes = getAxes(camera);
             var p = axes[0].mul(-300).add(axes[1].mul(0));
-            translateAndRescale(camera.center, p.x, p.y, p.z, 1);
-            //for (var i = 0; i < objects.length; i++)
-            //    rotateObject(objects[i], -45*degree, 10*degree);
-            //render(objects, ctx, dx, dy, camera);
+            camera.translate(p.x, p.y, p.z);
 
             var button = 0;
             var ismousedown = false;
@@ -518,7 +301,7 @@
                 xm = evt.clientX - dx - canvas.offsetLeft;
                 ym = evt.clientY - dy - canvas.offsetTop;
                 for (var i = objects.length-1; i >= 0; i--) {
-                    if (objects[i].pointerInside(xm, ym, camera)) {
+                    if (objects[i].isClickable && objects[i].pointerInside(xm, ym, camera)) {
                         selectedObject = i;
                         if (button == 1) {
                             objects[i].color = nextColor(objects[i].color);
@@ -533,38 +316,48 @@
                 render(objects, canvas, ctx, dx, dy, camera);
                 xm = evt.clientX;
                 ym = evt.clientY;
+
             }
 
             function mouseMove(evt) {
+
+                var shapeMoved = false;
                 if (ismousedown) {
-                    if (button == 0) {
-                        var theta = (evt.clientX - xm) * degree;
-                        var phi = (evt.clientY - ym) * 2 * degree;
-
-                        if (selectedObject == -1) {
-                            rotate(camera.direction, origin, -theta, phi);
-                            camera.direction.normalize();
-                        } else {
-                            rotateObject(objects[selectedObject], theta, phi, camera.center);
-                        }
-                    } else if (button == 2) {
-                        var axes = getAxes(camera);
-                        var p = axes[0].mul(evt.clientX - xm).add(axes[1].mul(evt.clientY - ym));
-
-                        if (selectedObject == -1) {
-                            translateAndRescale(camera.center, p.x, p.y, p.z, 1);
-                        } else {
-                            p = p.mul(1/camera.zoom);
-                            translateAndRescaleObject(objects[selectedObject], p.x, p.y, p.z, 1);
-                        }
-                    }
-
+                    // find the axes relative to the view
+                    var axes = getAxes(camera);
+                    var diffX = evt.clientX - xm;
+                    var diffY = evt.clientY - ym;
+                    var p = axes[0].mul(diffX).add(axes[1].mul(diffY));
                     xm = evt.clientX;
                     ym = evt.clientY;
 
+                    if (button == 0) { // left click => rotate
+                        // get perpendicular axis
+                        var r = p.cross(camera.direction).mul(degree/2);
+
+                        if (selectedObject == -1) {
+                            // rotate camera
+                            camera.rotate(-r.x, -r.y, -r.z);
+                        } else {
+                            // rotate object
+                            objects[selectedObject].rotate(r.x, r.y, r.z);
+                        }
+
+                    } else if (button == 2) { // right click => move
+                        // normalize movement to the zoom
+                        p = p.mul(1/camera.zoom);
+
+                        if (selectedObject == -1) {
+                            // move camera
+                            camera.translate(p.x, p.y, p.z);
+                        } else {
+                            // move object
+                            objects[selectedObject].translate(p.x, p.y, p.z);
+                        }
+                    }
+
                     render(objects, canvas, ctx, dx, dy, camera);
                 }
-
             }
 
             function mouseUp() {
@@ -588,7 +381,7 @@
             function autorotate(objects) {
                 //for (var i = 0; i < objects.length; i++)
                 //    rotateObject(objects[i],  -0.5*degree, 0.5*degree);
-                rotate(camera.direction, new Vertex(0,0,0), -0.5*degree, 0.5*degree);
+                rotate(camera.direction, new Vertex(0,0,0), -0.5*degree, 0, 0.5*degree);
                 camera.direction.normalize();
                 render(objects, canvas, ctx, dx, dy, camera);
                 //autorotate_timeout = setTimeout(function() {autorotate(objects)}, 30);

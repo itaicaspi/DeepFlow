@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>DeepFlow</title>
+    <style>
+        html, body, canvas {
+            margin: 0;
+            width: 100%;
+            height: 100%;
+        }
+        input {
+            -webkit-border-radius: 7px;
+            -moz-border-radius: 7px;
+            border-radius: 7px;
+            margin: 8px;
+            padding: 5px;
+            font-size: medium;
+            border: 1px solid transparent;
+            border-top: none;
+            border-bottom: 1px solid #DDD;
+            box-shadow: inset 0 1px 2px rgba(0,0,0,.39), 0 -1px 1px #FFF, 0 1px 0 #FFF;
+            outline-width: 0;
+        }
+        .label {
+            width: 50px;
+            margin: 2px;
+            cursor: pointer;
+        }
+    </style>
+    <!--jQuery-->
+    <script src="jquery-3.0.0.min.js"></script>
+    <!-- bootstrap -->
+    <script src="bootstrap.min.js"></script>
+    <link href="bootstrap.min.css" rel="stylesheet">
+    <!--<link href="//netdna.bootstrapcdn.com/bootstrap/3.0.0/css/bootstrap-glyphicons.css" rel="stylesheet">-->
+    <link href="css/bootstrap-glyphicons.css" rel="stylesheet">
+
+    <script src="utils.js"></script>
+    <script src="definitions.js"></script>
+    <script src="objects.js"></script>
+    <script src="nn.js"></script>
+    <script src="transforms.js"></script>
+    <script src="shapes.js"></script>
+    <script type="text/javascript">
+        function nextColor(color) {
+            var colors = [orange, green, blue, red, purple, yellow, cyan, grey];
+            for (var i = 0; i < colors.length; i++) {
+                if (color == colors[i]) {
+                    return colors[(i+1)%colors.length];
+                }
+            }
+        }
+
+
+        var canvas;
+        var ctx;
+        var button;
+        var ismousedown;
+        var pointerOnShapeBorder;
+        var needDraw;
+        var initArrow;
+        var currentArrow;
+        var arrows;
+        var shapesAndArrows;
+        var degree;
+        var xm = 0, ym = 0;
+        var selectedShape = -1;
+        var shapes = [];
+        var selectedShapeForConfig = -1;
+
+        function drawShapes(ctx) {
+            for (var s = 0; s < shapes.length; s++) {
+                shapes[s].draw(ctx);
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawShapes(ctx);
+            if (pointerOnShapeBorder > -1) {
+                ctx.beginPath();
+                ctx.arc(xm, ym, 5, 0, 2 * Math.PI, false);
+                ctx.fillStyle = shapesAndArrows[pointerOnShapeBorder].borderColor.toString();
+                ctx.fill();
+            }
+            for (var a = 0; a < arrows.length; a++) {
+                arrows[a].draw(ctx);
+            }
+            currentArrow.draw(ctx);
+        }
+
+        function closeView() {
+            var view = $(".divContainer");
+            $(view).hide("slow");
+        }
+
+        function toggleView() {
+            var view = $(".divContainer");
+            $(view).toggle("slow");
+        }
+
+        function updateShape() {
+            shapes[selectedShapeForConfig].updateText($("#shapeName").val());
+            draw();
+        }
+
+        var orangeFill = new Color(255, 230, 153, 1);
+        var orangeBorder = new Color(255, 192, 0, 1);
+        var blueFill = new Color(207, 226, 243, 1);
+        var blueBorder = new Color(188, 214, 239, 1);
+        var redFill = new Color(230, 184, 175, 1);
+        var redBorder = new Color(204, 65, 37, 1);
+        var greenFill = new Color(217, 234, 211, 1);
+        var greenBorder = new Color(182, 215, 168, 1);
+        var pinkFill = new Color(234, 209, 220, 1);
+        var pinkBorder = new Color(214, 169, 191, 1);
+
+        function changeColor(color) {
+
+            if (color == "orange") {
+                shapes[selectedShapeForConfig].defaultColor = orangeFill;
+                shapes[selectedShapeForConfig].color = orangeFill;
+                shapes[selectedShapeForConfig].borderColor = orangeBorder;
+            } else if (color == "green") {
+                shapes[selectedShapeForConfig].defaultColor = greenFill;
+                shapes[selectedShapeForConfig].color = greenFill;
+                shapes[selectedShapeForConfig].borderColor = greenBorder;
+            } else if (color == "red") {
+                shapes[selectedShapeForConfig].defaultColor = redFill;
+                shapes[selectedShapeForConfig].color = redFill;
+                shapes[selectedShapeForConfig].borderColor = redBorder;
+            } else if (color == "blue") {
+                shapes[selectedShapeForConfig].defaultColor = blueFill;
+                shapes[selectedShapeForConfig].color = blueFill;
+                shapes[selectedShapeForConfig].borderColor = blueBorder;
+            }
+            for (var a = 0; a < arrows.length; a++) {
+                arrows[a].linkedShapeColorChange(shapes[selectedShapeForConfig], arrows);
+            }
+            draw();
+        }
+
+        function run() {
+            // Fix the canvas width and height
+            canvas = document.getElementById('cnv');
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
+            var dx = canvas.width / 2;
+            var dy = canvas.height / 2;
+
+            // Objects style
+            ctx = canvas.getContext('2d');
+
+
+            degree = Math.PI/180;
+
+
+            var rect1 = new Rectangle(50, 50, 80, 40, 2, 10, 6, "data", greenFill, greenBorder);
+            var rect2 = new Rectangle(45, 120, 80, 40, 2, 0, 6, "layer", blueFill, blueBorder);
+            var tri1 = new Triangle(70, 190, 40, 40, 2, 6, redFill, redBorder);
+            var circ1 = new Circle(60, 260, 30, 6, "operator", orangeFill, orangeBorder);
+
+            shapes = [rect1, rect2, tri1, circ1];
+            drawShapes(ctx);
+
+            button = 0;
+            ismousedown = false;
+            pointerOnShapeBorder = -1;
+            needDraw = false;
+            initArrow = new Line([], 5, new Color(0,0,0,1), 3);
+            currentArrow = new Line([], 5, new Color(0,0,0,1), 3);
+            arrows = [];
+            shapesAndArrows = shapes.concat(arrows);
+
+
+            function mouseDown(evt) {
+                ismousedown = true;
+                button = evt.button;
+
+                shapesAndArrows = shapes.concat(arrows);
+
+                selectedShape = -1;
+                xm = evt.clientX - canvas.getBoundingClientRect().left;
+                ym = evt.clientY - canvas.getBoundingClientRect().top;
+
+                for (var s = 0; s < shapes.length; s++) {
+                    if (shapes[s].pointerInside(xm, ym)) {
+                        selectedShape = s;
+                        shapes[s].focus();
+                    } else {
+                        shapes[s].unfocus();
+                    }
+                }
+
+                if (button == 0) {
+                    // add point to current arrow
+                    if (currentArrow.points >= 1) {
+                        currentArrow.points++;
+                    }
+                    // check if the pointer is on the border of any shape
+                    for (var s = 0; s < shapesAndArrows.length; s++) {
+                        onBorder = shapesAndArrows[s].pointerOnBorder(xm, ym, ctx);
+                        if (onBorder != [] && onBorder != false) {
+                            pointerOnShapeBorder = s;
+                            if (currentArrow.points == 0) {
+                                // start a new line
+                                if (onBorder.length == 2) {
+                                    currentArrow.startLine(new Vertex(xm, ym, 0), shapesAndArrows[s].borderColor, shapesAndArrows[s], onBorder);
+                                } else {
+                                    currentArrow.startLine(new Vertex(xm, ym, 0), shapesAndArrows[s].borderColor, shapesAndArrows[s]);
+                                }
+                                shapesAndArrows[s].attachShape(currentArrow);
+                            } else {
+                                if (shapesAndArrows[s].type == "Line") {
+                                    pointerOnShapeBorder = -1;
+                                    continue;
+                                }
+                                currentArrow.endLine(new Vertex(xm, ym, 0), shapesAndArrows[s]);
+                                arrows.push(currentArrow);
+                                currentArrow = new Line([], 5, new Color(0,0,0,1), 3);
+                                shapesAndArrows[s].attachShape(currentArrow);
+                            }
+                            break;
+                        }
+                    }
+                    if (selectedShape == -1 && pointerOnShapeBorder == -1) {
+                        closeView();
+                    }
+                    if (currentArrow.points == 0 && pointerOnShapeBorder == -1) {
+                        currentArrow = new Line([], 5, new Color(0,0,0,1), 3);
+                    }
+                } else if (button == 2) {
+                    if (selectedShape > -1) {
+                        var shape;
+                        var curr = shapes[selectedShape];
+                        if (curr.type == "Rectangle") {
+                            shape = new Rectangle(curr.x, curr.y + 70, curr.baseWidth, curr.baseHeight, curr.radius, curr.offset, curr.stroke, curr.text, curr.defaultColor, curr.borderColor);
+                        } else if (shapes[selectedShape].type == "Triangle") {
+                            shape = new Triangle(curr.x, curr.y + 70, curr.baseWidth, curr.baseHeight, curr.radius, curr.stroke, curr.defaultColor, curr.borderColor);
+                        } else if (shapes[selectedShape].type == "Circle") {
+                            shape = new Circle(curr.x, curr.y + 70, curr.radius, curr.stroke, curr.text, curr.defaultColor, curr.borderColor);
+                        }
+                        shapes.push(shape);
+                    }
+                }
+                shapesAndArrows = shapes.concat(arrows);
+                if (selectedShape > -1) {
+                    selectedShapeForConfig = selectedShape;
+                    if ($(".divContainer").is(":visible")) config(evt);
+                }
+            }
+
+            function mouseMove(evt) {
+
+                if (typeof xm == 'undefined') xm = evt.clientX - canvas.getBoundingClientRect().left;
+                if (typeof ym == 'undefined') ym = evt.clientY - canvas.getBoundingClientRect().top;
+                var diffX = evt.clientX - canvas.getBoundingClientRect().left - xm;
+                var diffY = evt.clientY - canvas.getBoundingClientRect().top - ym;
+                xm = evt.clientX - canvas.getBoundingClientRect().left;
+                ym = evt.clientY - canvas.getBoundingClientRect().top;
+
+                pointerOnShapeBorder = -1;
+                for (var s = 0; s < shapes.length; s++) {
+                    if (shapes[s].pointerInside(xm, ym)) {
+                        shapes[s].color = new Color(shapes[s].defaultColor.r + 10,
+                                shapes[s].defaultColor.g + 10,
+                                shapes[s].defaultColor.b + 10, 1);
+                        needDraw = true;
+                    } else if (shapes[s].color.r != shapes[s].defaultColor.r || shapes[s].color.g != shapes[s].defaultColor.g || shapes[s].color.b != shapes[s].defaultColor.b) {
+                        shapes[s].color = shapes[s].defaultColor;
+                        needDraw = true;
+                    }
+                }
+                for (var s = 0; s < shapesAndArrows.length; s++) {
+                    if (shapesAndArrows[s].pointerOnBorder(xm, ym, ctx)) {
+                        pointerOnShapeBorder = s;
+                        needDraw = true;
+                    }
+                }
+
+                if (ismousedown) {
+                    if (button == 0) {
+                        // move shapes
+                        if (selectedShape > -1) {
+                            shapes[selectedShape].translate(diffX, diffY);
+                            for (var a = 0; a < arrows.length; a++) {
+                                arrows[a].linkedShapeMoved(diffX, diffY, shapes[selectedShape]);
+                            }
+                            needDraw = true;
+                        }
+                    } else if (button == 2) {
+                    }
+                }
+
+                if (currentArrow.vertices.length > 0) {
+                    currentArrow.addPoint(new Vertex(xm, ym, 0));
+                }
+
+                if (needDraw == true) {
+                    draw();
+                }
+            }
+
+            function mouseUp() {
+                ismousedown = false;
+                selectedShape = -1;
+            }
+
+
+            function config(evt) {
+                xm = evt.clientX - canvas.getBoundingClientRect().left;
+                ym = evt.clientY - canvas.getBoundingClientRect().top;
+                for (var s = 0; s < shapes.length; s++) {
+                    if (shapes[s].pointerInside(xm, ym)) {
+                        selectedShape = s;
+                    }
+                }
+                $("#shapeName").val(shapes[selectedShape].text);
+                if (!$(".divContainer").is(":visible")) {
+                    toggleView();
+                }
+                $("#shapeName").focus();
+                return true;
+            }
+
+            canvas.addEventListener('mousedown', mouseDown);
+            document.addEventListener('mousemove', mouseMove);
+            document.addEventListener('mouseup', mouseUp);
+            canvas.addEventListener('dblclick', config);
+
+        }
+    </script>
+</head>
+<body onload="run()" style="overflow: hidden;" oncontextmenu="return false">
+
+    <div class="col-lg-10">
+        <canvas id="cnv" width="800" height="600"></canvas>
+    </div>
+    <div class="col-lg-2 divContainer" style="padding: 20px; display: none; height: 600px">
+        <div >
+            <div class="row">
+                <div class="col-lg-12">
+                    <div class="input-group">
+                        <span class="input-group-addon" id="basic-addon3">Name</span>
+                        <input type="text" id="shapeName" class="form-control" placeholder="Layer name" onkeyup="updateShape()">
+                    </div><!-- /input-group -->
+                </div><!-- /.col-lg-6 -->
+            </div><!-- /.row -->
+            <div class="row">
+                <div class="col-lg-2">
+                    <table>
+                        <tr>
+                            <td><span class="label label-success" style="display: block;" onclick="changeColor('green')">Green</span></td>
+                            <td><span class="label label-info" style="display: block;" onclick="changeColor('blue')">Blue</span></td>
+                        </tr>
+                        <tr>
+                            <td><span class="label label-warning" style="display: block;" onclick="changeColor('orange')">Orange</span></td>
+                            <td><span class="label label-danger" style="display: block;" onclick="changeColor('red')">Red</span></td>
+                        </tr>
+                    </table>
+                </div><!-- /.col-lg-6 -->
+            </div>
+        </div>
+    </div>
+</body>
+</html>
